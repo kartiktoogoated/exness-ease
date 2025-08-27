@@ -4,13 +4,29 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "ts-node src/ws/pricePoller.ts",
+    "build": "tsc",
+    "start": "node dist/ws/pricePoller.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "typescript": "^5.9.2"
+    "@prisma/client": "^6.14.0",
+    "@types/express": "^5.0.3",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/ws": "^8.18.1",
+    "bcryptjs": "^3.0.2",
+    "db": "workspace:*",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "typescript": "^5.9.2",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "prisma": "^6.14.0",
+    "ts-node": "^10.9.2"
   }
 }

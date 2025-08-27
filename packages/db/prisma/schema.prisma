@@ -1,0 +1,72 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  password  String
+  balances  Balance[]
+  orders    Order[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Balance {
+  id        String   @id @default(uuid())
+  userId    String
+  asset     String  
+  qty       Decimal  @db.Decimal(20,8)
+
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, asset]) 
+}
+
+model Order {
+  id        String      @id @default(uuid())
+  userId    String
+
+  type      OrderType
+  qty       Decimal     @db.Decimal(20,8)
+  price     Decimal     @db.Decimal(20,8) 
+  status    OrderStatus @default(PENDING)
+  createdAt DateTime    @default(now())
+
+  user      User        @relation(fields: [userId], references: [id])
+}
+
+model Tick {
+  assetId  String
+  ts       DateTime
+  bidPrice Decimal @db.Decimal(20,8)
+  bidQty   Decimal @db.Decimal(20,8)
+  askPrice Decimal @db.Decimal(20,8)
+  askQty   Decimal @db.Decimal(20,8)
+
+  @@id([assetId, ts])
+  @@index([assetId, ts])
+}
+
+enum OrderType {
+  BUY
+  SELL
+}
+
+enum OrderStatus {
+  PENDING
+  FILLED
+  CANCELED
+}
