@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import prisma from "../prismaClient";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { authMiddleware, AuthRequest } from "../middleware/authMiddleware";
 
 export const authRouter = Router();
 const JWT_SECRET = process.env.JWT_SECRET || "kartiktoogoated";

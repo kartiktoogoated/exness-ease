@@ -24,21 +24,25 @@ const server = app.listen(PORT, () => {
     });
   });
   
-  const symbol = "btcusdt"; 
-  const binanceWS = new WebSocket(`wss://stream.binance.com:9443/ws/${symbol}@bookTicker`);
+  const symbols = ["btcusdt", "ethusdt", "solusdt"];
+  const streams = symbols.map((s) => `${s}@bookTicker`).join("/");
+  const binanceWS = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
   
   binanceWS.on("open", () => {
-    console.log(`Connected to Binance WS (${symbol})`);
+    console.log(`Connected to Binance WS (${symbols.join(", ")})`);
   });
   
   let tickBuffer: any[] = [];
 
   binanceWS.on("message", async (msg) => {
-    const data = JSON.parse(msg.toString());
+    const parsed = JSON.parse(msg.toString());
+
+    const data = parsed.data;
+    const streamSymbol = parsed.stream.split("@")[0].toUpperCase();
   
     const tick = {
       ts: new Date(),
-      assetId: symbol.toUpperCase(),
+      assetId: streamSymbol,
       bidPrice: parseFloat(data.b),
       bidQty: parseFloat(data.B),
       askPrice: parseFloat(data.a),
