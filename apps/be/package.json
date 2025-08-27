@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "ts-node src/server.ts",             
+    "dev": "ts-node src/server.ts",
     "dev:poller": "ts-node src/ws/pricePoller.ts",
     "build": "tsc",
     "start": "node dist/ws/pricePoller.js"
@@ -22,6 +22,7 @@
     "db": "workspace:*",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
+    "kafkajs": "^2.2.4",
     "typescript": "^5.9.2",
     "ws": "^8.18.3"
   },

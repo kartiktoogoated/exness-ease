@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import prisma from "../prismaClient";
 import { authMiddleware } from "../middleware/authMiddleware";
 import { Decimal } from "@prisma/client/runtime/library";
+import { latestPrices } from "../services/tickConsumer";
 
 export const tradeRouter = Router();
 
@@ -22,6 +23,8 @@ export enum OrderSide {
     SOLUSDT: 20,
   }
 
+  const MAX_TICK_AGE = 5000;
+
 tradeRouter.get("/balance", authMiddleware, async (req: Request, res: Response) => {
     try {
         const userId = (req as any).user.userId;
@@ -36,8 +39,22 @@ tradeRouter.get("/balance", authMiddleware, async (req: Request, res: Response) 
         console.error("Balance error:", err);
         res.status(500).json({ message: "Internal Server Error" });    
     }
-})
+});
 
+tradeRouter.get("/orders", authMiddleware, async(req: Request, res: Response) => {
+    try {
+        const userId = (req as any).user.userId;
+        const orders = await prisma.order.findMany({
+            where: { userId },
+            orderBy: { createdAt: "desc" },
+        });
+
+        res.json({ orders });
+    } catch (err: any) {
+        console.error("Orders error:", err);
+        res.status(500).json({ message: "Internal Server Error" });
+    }
+});
 
 tradeRouter.post("/order/open", authMiddleware, async (req: Request, res: Response) => {
     try {
@@ -48,92 +65,93 @@ tradeRouter.post("/order/open", authMiddleware, async (req: Request, res: Respon
             return res.status(400).json({ message: "All fields are required" });
         }
 
-        const latestTick = await prisma.tick.findFirst({
-            where: { assetId: asset },
-            orderBy: { ts: "desc" },
-        });
-
-        if (!latestTick) {
-            return res.status(400).json({ message: "No market data available" });
+        const tick = latestPrices[asset];
+        if (!tick) {
+            return res.status(400).json({ message: "No fresh market data" });
         }
 
+        const tickAge = Date.now() - new Date(tick.ts).getTime();
+        if (tickAge > MAX_TICK_AGE) {
+            return res.status(400).json({ message: "Market data too old. Try again later" });
+        }
+        
         const spreadBps = SPREADS[asset];
         const spread = spreadBps / 10000;
 
         let executionPrice: number;
         if (type === OrderSide.BUY) {
-            executionPrice = Number(latestTick.askPrice) * (1 + spread);
+            executionPrice = Number(tick.askPrice) * (1 + spread);
         } else {
-            executionPrice = Number(latestTick.bidPrice) * (1 - spread);
+            executionPrice = Number(tick.bidPrice) * (1 - spread);
         }
 
         const qtyDec = new Decimal(qty);
         const cost = qtyDec.mul(executionPrice);
 
         const order = await prisma.$transaction(async (tx) => {
-        if (type === OrderSide.BUY) {
-            const usdt = await prisma.balance.findUnique({
-                where: { userId_asset: { userId, asset: "USDT"}},
-            });
-
-            if (!usdt || usdt.qty.lessThan(cost)) {
-                return res.status(400).json({ message: "Insufficient USDT balance" });
-            }
-
-            await prisma.balance.update({
-                where: { userId_asset: { userId, asset: "USDT"} },
+            if (type === OrderSide.BUY) {
+              const usdt = await tx.balance.findUnique({
+                where: { userId_asset: { userId, asset: "USDT" } },
+              });
+      
+              if (!usdt || usdt.qty.lt(cost)) {
+                throw new Error("Insufficient USDT balance");
+              }
+      
+              await tx.balance.update({
+                where: { userId_asset: { userId, asset: "USDT" } },
                 data: { qty: { decrement: cost } },
-            });
-
-            await prisma.balance.upsert({
+              });
+      
+              await tx.balance.upsert({
                 where: { userId_asset: { userId, asset } },
-                create: { userId, asset, qty},
-                update: { qty: { increment: qty} },
-            });
-        }
-        
-        if (type == OrderSide.SELL) {
-            const holding = await prisma.balance.findUnique({
-                where: { userId_asset: { userId, asset } },
-            });
-
-            if (!holding || Number(holding.qty) < qty) {
-                return res.status(401).json({ message: "Insufficient asset balance" });
+                create: { userId, asset, qty: qtyDec },
+                update: { qty: { increment: qtyDec } },
+              });
             }
-
-            await prisma.balance.update({
+      
+            if (type === OrderSide.SELL) {
+              const holding = await tx.balance.findUnique({
                 where: { userId_asset: { userId, asset } },
-                data: { qty: { decrement: qty } },
-            });
-
-            await prisma.balance.upsert({
+              });
+      
+              if (!holding || holding.qty.lt(qtyDec)) {
+                throw new Error("Insufficient asset balance");
+              }
+      
+              await tx.balance.update({
+                where: { userId_asset: { userId, asset } },
+                data: { qty: { decrement: qtyDec } },
+              });
+      
+              await tx.balance.upsert({
                 where: { userId_asset: { userId, asset: "USDT" } },
                 create: { userId, asset: "USDT", qty: cost },
                 update: { qty: { increment: cost } },
-            })
-        }
-
-        const order = await prisma.order.create({
-            data: {
+              });
+            }
+      
+            return await tx.order.create({
+              data: {
                 userId,
                 asset,
                 type,
-                qty,
+                qty: qtyDec,
                 price: executionPrice,
                 status: "FILLED",
-            },
-        });
-    });
-
-        res.status(201).json({ message: "Order opened", order });
-    } catch (err: any) {
-        console.error("Open order error:", err.message || err);
-        if (err.message?.includes("balance")) {
-          return res.status(400).json({ message: err.message });
+              },
+            });
+          });
+      
+          return res.status(201).json({ message: "Order executed", order });
+        } catch (err: any) {
+          console.error("Open order error:", err.message || err);
+          if (err.message?.includes("balance")) {
+            return res.status(400).json({ message: err.message });
+          }
+          return res.status(500).json({ message: "Internal Server Error" });
         }
-        res.status(500).json({ message: "Internal Server Error" });
-      }
-});
+      });
 
 tradeRouter.post("/deposit", authMiddleware, async(req: Request, res: Response) => {
     try {
@@ -157,17 +175,32 @@ tradeRouter.post("/deposit", authMiddleware, async(req: Request, res: Response) 
     }
 });
 
-tradeRouter.get("/orders", authMiddleware, async(req: Request, res: Response) => {
+tradeRouter.post("/order/close", authMiddleware, async (req: Request, res: Response) => {
     try {
         const userId = (req as any).user.userId;
-        const orders = await prisma.order.findMany({
-            where: { userId },
-            orderBy: { createdAt: "desc" },
-        });
+        const { orderId } = req.body as { orderId: string };
 
-        res.json({ orders });
+        if (!orderId) {
+            return res.status(400).json({ error: "orderId is required" });
+        }
+
+        const order = await prisma.order.findUnique({ where: { id: orderId } });
+
+        if (!order || order.userId !== userId) {
+            return res.status(404).json({ error: "order not found"});
+        }
+
+        if (order.status !== "PENDING") {
+            return res.status(400).json({ error: "only pending orders can be cancelled" });
+        }
+
+        const closed = await prisma.order.update({
+            where: { id: orderId },
+            data: { status: "CANCELED" },
+        });
     } catch (err: any) {
-        console.error("Orders error:", err);
+        console.error("Close order error:", err);
         res.status(500).json({ message: "Internal Server Error" });
     }
-})
+});
+

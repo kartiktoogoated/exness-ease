@@ -1,97 +1,54 @@
 import WebSocket from "ws";
-import express from "express";
-import { PrismaClient } from "@prisma/client";
+import { Kafka } from "kafkajs";
 
-const prisma = new PrismaClient();
-const app = express();
-const PORT = process.env.PORT;
+const kafka = new Kafka({ clientId: "tick-producer", brokers: ["localhost:9092"] });
+const producer = kafka.producer();
 
-const server = app.listen(PORT, () => {
-    console.log(`Price poller running on http://localhost:${PORT}`);
-  });
-  
-  const wss = new WebSocket.Server({ server });
-  
-  let clients: WebSocket[] = [];
-  
-  wss.on("connection", (ws) => {
-    console.log("Client connected to price stream");
-    clients.push(ws);
-  
-    ws.on("close", () => {
-      clients = clients.filter(c => c !== ws);
-      console.log("Client disconnected");
-    });
-  });
-  
-  const symbols = ["btcusdt", "ethusdt", "solusdt"];
-  const streams = symbols.map((s) => `${s}@bookTicker`).join("/");
-  const binanceWS = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
-  
+const symbols = ["btcusdt", "ethusdt", "solusdt"];
+const streams = symbols.map((s) => `${s}@bookTicker`).join("/");
+const binanceWS = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
+
+async function start() {
+  await producer.connect();
+  console.log("Kafka Producer connected");
+
   binanceWS.on("open", () => {
     console.log(`Connected to Binance WS (${symbols.join(", ")})`);
   });
-  
-  let tickBuffer: any[] = [];
 
   binanceWS.on("message", async (msg) => {
-    const parsed = JSON.parse(msg.toString());
+    try {
+      const parsed = JSON.parse(msg.toString());
+      const data = parsed.data;
+      const streamSymbol = parsed.stream.split("@")[0].toUpperCase();
 
-    const data = parsed.data;
-    const streamSymbol = parsed.stream.split("@")[0].toUpperCase();
-  
-    const tick = {
-      ts: new Date(),
-      assetId: streamSymbol,
-      bidPrice: parseFloat(data.b),
-      bidQty: parseFloat(data.B),
-      askPrice: parseFloat(data.a),
-      askQty: parseFloat(data.A),
-    };
-  
-    // await prisma.tick.create({
-    //   data: {
-    //     assetId: "BTCUSDT",
-    //     ts: tick.ts,
-    //     price: tick.askPrice,  
-    //     volume: tick.askQty,   
-    //   }
-    // });
-  
-    const payload = JSON.stringify({
-      asset: "BTCUSDT",
-      ...tick,
-    });
-  
-    // console.log(payload);
-  
-    tickBuffer.push({
-        ts: tick.ts,
-        assetId: tick.assetId,
-        bidPrice: tick.bidPrice,  
-        bidQty: tick.bidQty,  
-        askPrice: tick.askPrice,  
-        askQty: tick.askQty,    
+      const tick = {
+        ts: new Date().toISOString(),
+        assetId: streamSymbol,
+        bidPrice: parseFloat(data.b),
+        bidQty: parseFloat(data.B),
+        askPrice: parseFloat(data.a),
+        askQty: parseFloat(data.A),
+      };
+
+      await producer.send({
+        topic: "ticks",
+        messages: [{ key: tick.assetId, value: JSON.stringify(tick) }],
       });
-    });
-    setInterval(async () => {
-        if (tickBuffer.length === 0) return;
-      
-        const batch = [...tickBuffer];
-        tickBuffer.length = 0;
-        // tickBuffer = [];
-      
-        try {
-          await prisma.tick.createMany({
-            data: batch,
-            skipDuplicates: true,
-          });
-          console.log(`Inserted ${batch.length} ticks`);
-        } catch (err) {
-          console.error("Batch insert error:", err);
-        }
-      }, 10_000);
-  
-   
-  binanceWS.on("close", () => console.log("Binance WS closed"));
-  binanceWS.on("error", (err) => console.error("Binance WS error", err));
+    } catch (err) {
+      console.error("Error parsing Binance tick:", err);
+    }
+  });
+
+  binanceWS.on("close", () => {
+    console.error("Binance WS closed. Reconnecting in 5s...");
+    setTimeout(start, 5000);
+  });
+
+  binanceWS.on("error", (err) => {
+    console.error("Binance WS error:", err);
+    binanceWS.close();
+  });
+}
+
+start().catch(console.error);
