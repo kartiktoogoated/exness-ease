@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "ts-node src/ws/pricePoller.ts",
+    "dev": "ts-node src/server.ts",             
+    "dev:poller": "ts-node src/ws/pricePoller.ts",
     "build": "tsc",
     "start": "node dist/ws/pricePoller.js"
   },

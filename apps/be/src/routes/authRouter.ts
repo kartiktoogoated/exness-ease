@@ -4,9 +4,11 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
 export const authRouter = Router();
-const JWT_SECRET = process.env.JWT_SECRET!;
+const JWT_SECRET = process.env.JWT_SECRET || "kartiktoogoated";
 
 authRouter.post("/signup", async (req: Request, res: Response) => {
+  // console.log("Headers:", req.headers);
+  // console.log("Body:", req.body);
   try {
     const { email, password, confirmPassword } = req.body as {
       email: string;
@@ -22,7 +24,10 @@ authRouter.post("/signup", async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Passwords do not match"});
     }
 
-    const existingUser = await prisma.user.findUnique({ where: email })
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+    });
+
     if (existingUser){
       return res.status(400).json({ message: "User already exists! "})
     }
@@ -33,18 +38,19 @@ authRouter.post("/signup", async (req: Request, res: Response) => {
       data: {
         email,
         password: hashedPassword,
-        role: "User",
       },
     });
 
     return res.status(201).json({
       message: "User created successfully",
-      user: { id: user.id, email: user.email, role: user.role },
+      user: { id: user.id, email: user.email },
     });
 
   } catch (err: any) {
-    res.status(500).json({ message: "Internal Server Error "})
+    console.error("Signup error:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
+  });
 
   authRouter.post("/signin", async (req: Request, res: Response) => {
     try {
@@ -73,10 +79,11 @@ authRouter.post("/signup", async (req: Request, res: Response) => {
       res.status(200).json({
         message: "Signin successful",
         token,
+        user: { id: user.id, email: user.email },
       });
 
     } catch(err: any) {
-      return res.status(500).json({ message: "Internal Server Error "})
+      console.error("Signin error:", err);
+      return res.status(500).json({ message: "Internal Server Error" });
     }
-  })
 })
