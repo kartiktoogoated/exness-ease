@@ -86,11 +86,8 @@ SELECT add_continuous_aggregate_policy('candles_1h',
     end_offset   => INTERVAL '1 hour',
     schedule_interval => INTERVAL '15 minutes');
 
--- 7. Add compression to Tick (optional but good for perf)
-ALTER TABLE public."Tick" SET (
-  timescaledb.compress,
-  timescaledb.compress_segmentby = 'assetId'
-);
+ALTER TABLE public."Tick"
+  SET (timescaledb.compress,
+       timescaledb.compress_segmentby = '"assetId"'); -- must use quotes
 
--- Compress ticks older than 3 days
 SELECT add_compression_policy('public."Tick"', INTERVAL '3 days');

@@ -40,6 +40,7 @@ model Order {
   id        String      @id @default(uuid())
   userId    String
 
+  asset     String
   type      OrderType
   qty       Decimal     @db.Decimal(20,8)
   price     Decimal     @db.Decimal(20,8) 
