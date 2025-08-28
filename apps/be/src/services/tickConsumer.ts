@@ -6,6 +6,7 @@ const consumer = kafka.consumer({ groupId: "tick-group" });
 
 export const latestPrices: Record<string, any> = {}; 
 
+
 async function run() {
   await consumer.connect();
   await consumer.subscribe({ topic: "ticks", fromBeginning: false });
@@ -35,10 +36,7 @@ async function run() {
       buffer.push({
         ts: new Date(tick.ts),
         assetId: tick.assetId,
-        bidPrice: tick.bidPrice,
-        bidQty: tick.bidQty,
-        askPrice: tick.askPrice,
-        askQty: tick.askQty,
+        price: tick.price,
       });
     },
   });

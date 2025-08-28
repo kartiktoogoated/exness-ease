@@ -30,7 +30,7 @@ marketRouter.get("/candles", async (req: Request, res: Response) => {
         }
 
         const rows = await prisma.$queryRawUnsafe<any[]>(`
-            SELECT "assetId", bucket, open, high, low, close, volume
+            SELECT "assetId", bucket, open, high, low, close
             FROM ${table}
             WHERE "assetId" = ANY($1)
             ORDER BY bucket DESC
@@ -45,7 +45,6 @@ marketRouter.get("/candles", async (req: Request, res: Response) => {
             high: Number(r.high),
             low: Number(r.low),
             close: Number(r.close),
-            volume: Number(r.volume),
           }))
           .reverse();
 

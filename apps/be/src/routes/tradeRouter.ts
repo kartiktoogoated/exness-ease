@@ -91,18 +91,14 @@ tradeRouter.post(
       const spreadBps = SPREADS[asset];
       const spread = spreadBps / 10000;
 
-      const marketAsk = Number(tick.askPrice);
-      const marketBid = Number(tick.bidPrice);
+      const marketPrice = Number(tick.price);
 
-      let marketPrice: number;
       let executionPrice: number;
       if (type === OrderSide.BUY) {
-        marketPrice = marketAsk;
-        executionPrice = Number(tick.askPrice) * (1 + spread);
+        executionPrice = marketPrice * (1 + spread);
       } else {
-        marketPrice = marketBid;
-        executionPrice = Number(tick.bidPrice) * (1 - spread);
-      }
+        executionPrice = marketPrice * (1 - spread);
+      }      
 
       const qtyDec = new Decimal(qty);
       const cost = qtyDec.mul(executionPrice);
@@ -230,6 +226,8 @@ tradeRouter.post(
         where: { id: orderId },
         data: { status: "CANCELED" },
       });
+
+      return res.json({ message: "Order is closed" });
     } catch (err: any) {
       console.error("Close order error:", err);
       res.status(500).json({ message: "Internal Server Error" });

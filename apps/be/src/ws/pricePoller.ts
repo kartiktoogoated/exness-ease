@@ -5,7 +5,7 @@ const kafka = new Kafka({ clientId: "tick-producer", brokers: ["localhost:9092"]
 const producer = kafka.producer();
 
 const symbols = ["btcusdt", "ethusdt", "solusdt"];
-const streams = symbols.map((s) => `${s}@bookTicker`).join("/");
+const streams = symbols.map((s) => `${s}@aggTrade`).join("/");
 const binanceWS = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
 
 async function start() {
@@ -23,12 +23,9 @@ async function start() {
       const streamSymbol = parsed.stream.split("@")[0].toUpperCase();
 
       const tick = {
-        ts: new Date().toISOString(),
+        ts: new Date(data.T).toISOString(), 
         assetId: streamSymbol,
-        bidPrice: parseFloat(data.b),
-        bidQty: parseFloat(data.B),
-        askPrice: parseFloat(data.a),
-        askQty: parseFloat(data.A),
+        price: parseFloat(data.p),          
       };
 
       await producer.send({
