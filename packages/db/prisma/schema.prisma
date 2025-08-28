@@ -52,16 +52,14 @@ model Order {
 }
 
 model Tick {
-  assetId  String
-  ts       DateTime
-  bidPrice Decimal @db.Decimal(20,8)
-  bidQty   Decimal @db.Decimal(20,8)
-  askPrice Decimal @db.Decimal(20,8)
-  askQty   Decimal @db.Decimal(20,8)
+  assetId String
+  ts      DateTime
+  price   Decimal @db.Decimal(20,8)
 
   @@id([assetId, ts])
   @@index([assetId, ts])
 }
+
 
 enum OrderType {
   BUY
