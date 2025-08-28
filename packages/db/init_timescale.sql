@@ -1,4 +1,5 @@
 -- 1. Convert Tick into hypertable (safe re-run)
+CREATE EXTENSION IF NOT EXISTS timescaledb;
 SELECT create_hypertable('public."Tick"', 'ts', migrate_data => true, if_not_exists => true);
 
 -- 2. Create 1m candles

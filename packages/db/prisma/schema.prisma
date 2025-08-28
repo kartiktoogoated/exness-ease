@@ -43,6 +43,7 @@ model Order {
   asset     String
   type      OrderType
   qty       Decimal     @db.Decimal(20,8)
+  marketPrice Decimal   @db.Decimal(20,8)
   price     Decimal     @db.Decimal(20,8) 
   status    OrderStatus @default(PENDING)
   createdAt DateTime    @default(now())
