@@ -30,7 +30,7 @@ authRouter.post("/signup", async (req: Request, res: Response) => {
     });
 
     if (existingUser){
-      return res.status(400).json({ message: "User already exists! "})
+      return res.status(403).json({ message: "Error while signing up" });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -42,14 +42,14 @@ authRouter.post("/signup", async (req: Request, res: Response) => {
       },
     });
 
-    return res.status(201).json({
+    return res.status(200).json({
       message: "User created successfully",
-      user: { id: user.id, email: user.email },
+      user: { userId: user.id },
     });
 
   } catch (err: any) {
-    console.error("Signup error:", err);
-    return res.status(500).json({ message: "Internal Server Error" });
+    console.error(err);
+    return res.status(403).json({ message: "Error while signing up" });
   }
   });
 
@@ -63,7 +63,7 @@ authRouter.post("/signup", async (req: Request, res: Response) => {
 
       const user = await prisma.user.findUnique({ where: { email } });
       if (!user) {
-        res.status(400).json({ message: "Invalid credentials" });
+        res.status(403).json({ message: "Incorrect credentials" });
         return;
       }
   
