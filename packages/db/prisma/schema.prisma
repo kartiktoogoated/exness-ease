@@ -13,7 +13,16 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
-
+model Asset {
+  symbol         String  @id          
+  name           String
+  priceDecimals  Int     
+  qtyDecimals    Int    
+  imageUrl       String?
+  Orders         Order[]
+  Balances       Balance[]
+  Ticks          Tick[]
+}
 model User {
   id        String    @id @default(uuid())
   email     String    @unique
@@ -26,48 +35,61 @@ model User {
 }
 
 model Balance {
-  id        String   @id @default(uuid())
+  id        String  @id @default(uuid())
   userId    String
-  asset     String  
-  qty       Decimal  @db.Decimal(20,8)
+  assetId   String 
+  qtyInt    BigInt  
 
-  user      User     @relation(fields: [userId], references: [id])
+  user      User    @relation(fields: [userId], references: [id])
+  asset     Asset   @relation(fields: [assetId], references: [symbol])
 
-  @@unique([userId, asset]) 
+  @@unique([userId, assetId])
 }
-
 model Order {
-  id        String      @id @default(uuid())
-  userId    String
+  id          String      @id @default(uuid())
+  userId      String
+  assetId     String      
 
-  asset     String
-  type      OrderType
-  qty       Decimal     @db.Decimal(20,8)
-  marketPrice Decimal   @db.Decimal(20,8)
-  price     Decimal     @db.Decimal(20,8) 
-  status    OrderStatus @default(PENDING)
-  createdAt DateTime    @default(now())
+  type        OrderType   
+  status      TradeStatus @default(OPEN) 
 
-  user      User        @relation(fields: [userId], references: [id])
+  qtyInt      BigInt
+
+  openPrice   BigInt
+  closePrice  BigInt?
+
+  leverage    Int         @default(1)
+  marginInt   BigInt      @default(0)  
+
+  pnlInt      BigInt?
+
+  createdAt   DateTime    @default(now())
+  closedAt    DateTime?
+
+  user        User        @relation(fields: [userId], references: [id])
+  asset       Asset       @relation(fields: [assetId], references: [symbol])
+
+  @@index([userId, status, createdAt])
 }
 
 model Tick {
   assetId String
   ts      DateTime
-  price   Decimal @db.Decimal(20,8)
+  price   BigInt   
+
+  asset   Asset    @relation(fields: [assetId], references: [symbol])
 
   @@id([assetId, ts])
   @@index([assetId, ts])
 }
-
 
 enum OrderType {
   BUY
   SELL
 }
 
-enum OrderStatus {
-  PENDING
-  FILLED
-  CANCELED
+enum TradeStatus {
+  OPEN
+  CLOSED
+  LIQUIDATED
 }
