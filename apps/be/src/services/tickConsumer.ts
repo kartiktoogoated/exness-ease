@@ -6,7 +6,6 @@ const consumer = kafka.consumer({ groupId: "tick-group" });
 
 export const latestPrices: Record<string, { ts: Date; assetId: string; price: bigint }> = {};
 
-// cache asset decimals in memory
 const assetDecimals: Record<string, number> = {};
 
 function toBigIntPrice(price: number, decimals: number): bigint {
@@ -20,7 +19,6 @@ async function run() {
 
   let buffer: { ts: Date; assetId: string; price: bigint }[] = [];
 
-  // flush every 10s
   setInterval(async () => {
     if (buffer.length === 0) return;
     const batch = [...buffer];
@@ -28,9 +26,9 @@ async function run() {
 
     try {
       await prisma.tick.createMany({ data: batch, skipDuplicates: true });
-      console.log(`✅ Inserted ${batch.length} ticks`);
+      console.log(`Inserted ${batch.length} ticks`);
     } catch (err) {
-      console.error("❌ DB insert error:", err);
+      console.error("DB insert error:", err);
       console.error("Failed batch:", batch);
     }
   }, 10_000);
@@ -45,8 +43,7 @@ async function run() {
       };
   
       let decimals: number;
-  
-      // cache lookup
+
       if (assetDecimals[tick.assetId]) {
         decimals = assetDecimals[tick.assetId];
       } else {
@@ -59,13 +56,13 @@ async function run() {
         if (asset) {
           decimals = asset.priceDecimals;
         } else {
-          // ✅ auto-create with defaults (can tweak decimals later)
+
           const created = await prisma.asset.create({
             data: {
               symbol: tick.assetId,
-              name: tick.assetId,       // placeholder
-              priceDecimals: 4,         // default decimals
-              qtyDecimals: 8,           // default decimals
+              name: tick.assetId,   
+              priceDecimals: 4,        
+              qtyDecimals: 8,          
               imageUrl: null,
             },
           });
@@ -73,10 +70,9 @@ async function run() {
           console.log(`🆕 Created asset ${tick.assetId}`);
         }
   
-        assetDecimals[tick.assetId] = decimals; // cache
+        assetDecimals[tick.assetId] = decimals; 
       }
   
-      // convert to bigint
       const bigPrice = toBigIntPrice(Number(tick.price), decimals);
   
       latestPrices[tick.assetId] = {
