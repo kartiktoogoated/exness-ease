@@ -251,9 +251,9 @@ tradeRouter.post(
         return res.status(411).json({ message: "Incorrect inputs" });
       }
 
-      if (![5, 10, 20, 100].includes(leverage)) {
+      if (leverage < 1 || leverage > 100) {
         return res.status(400).json({ message: "Invalid leverage" });
-      }
+      }      
 
       const assetId = asset.toUpperCase();
 
