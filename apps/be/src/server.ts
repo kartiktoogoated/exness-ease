@@ -1,6 +1,6 @@
 import express from "express";
 import { router } from "./routes";
-import "./ws/websocketServer"; // Start WebSocket server
+// import "./ws/pricePoller"; 
 
 const app = express();
 const API_PORT = process.env.API_PORT || 3000;

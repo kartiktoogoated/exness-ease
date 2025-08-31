@@ -1,6 +1,9 @@
 import WebSocket from "ws";
 import { Kafka } from "kafkajs";
+import dotenv from "dotenv";
+import fetch from "node-fetch";
 
+dotenv.config();
 const kafka = new Kafka({ clientId: "tick-producer", brokers: ["localhost:9092"] });
 const producer = kafka.producer();
 
@@ -8,9 +11,19 @@ const binanceSymbols = ["btcusdt", "solusdt"];
 const binanceStreams = binanceSymbols.map((s) => `${s}@trade`).join("/");
 const BINANCE_URL = `wss://stream.binance.com:9443/stream?streams=${binanceStreams}`;
 
-const POLYGON_URL = `wss://socket.polygon.io/stocks`;
-const POLYGON_KEY = process.env.POLYGON_KEY!;
-const equitySymbols = ["TSLA"];
+const POLYGON_URL = `wss://socket.polygon.io/crypto`;
+const POLYGON_KEY = process.env.POLYGON_KEY ;
+const equitySymbols = ["X:BTCUSD", "X:ETHUSD"];
+const POLL_INTERVAL = 5000;
+
+interface PolygonCryptoResponse {
+  status: string;
+  symbol: string;
+  last: {
+    price: number;
+    timestamp: number;
+  };
+}
 
 async function publishTick(tick: any) {
   try {
@@ -75,6 +88,7 @@ function startPolygonWS() {
   });
 
   polygonWS.on("message", async(msg) => {
+    console.log("Polygon raw:", msg.toString());
     try {
       const updates = JSON.parse(msg.toString());
       for (const u of updates) {
@@ -104,13 +118,46 @@ function startPolygonWS() {
     polygonWS.close();
   });
 }
+const cryptoSymbols = [
+  { base: "BTC", quote: "USD" },
+  { base: "ETH", quote: "USD" },
+];
+
+async function pollPolygonREST() {
+  for (const { base, quote } of cryptoSymbols) {
+    try {
+      const url = `https://api.polygon.io/v1/last/crypto/${base}/${quote}?apiKey=${POLYGON_KEY}`;
+      const res = await fetch(url);
+      const json = (await res.json()) as PolygonCryptoResponse;
+
+      if (json?.last) {
+        const tick = {
+          ts: new Date(json.last.timestamp).toISOString(),
+          assetId: `${base}${quote}`,
+          source: "POLYGON_REST",
+          price: json.last.price,
+        };
+
+        await publishTick(tick);
+        console.log("Polygon tick:", tick);
+      } else {
+        console.error("Polygon response missing last:", json);
+      }
+    } catch (err) {
+      console.error(`Error fetching Polygon price for ${base}${quote}:`, err);
+    }
+  }
+
+  setTimeout(pollPolygonREST, POLL_INTERVAL);
+}
 
 async function start() {
   await producer.connect();
   console.log("Kafka Producer connected");
 
   startBinanceWS();
-  startPolygonWS();
+  // startPolygonWS();
+  // pollPolygonREST();
 }
 
 start().catch(console.error);

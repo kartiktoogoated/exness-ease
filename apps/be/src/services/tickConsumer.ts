@@ -13,6 +13,30 @@ function toBigIntPrice(price: number, decimals: number): bigint {
   return BigInt(Math.round(price * Math.pow(10, decimals)));
 }
 
+async function insertBatchSQL(batch: { ts: Date; assetId: string; price: bigint }[]) {
+  if (batch.length === 0) return;
+
+  const values = batch
+    .map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3})`)
+    .join(", ");
+
+  const params = batch.flatMap((t) => [t.ts, t.assetId, t.price]);
+
+  try {
+    await prisma.$executeRawUnsafe(
+      `
+      INSERT INTO "Tick" ("ts", "assetId", "price")
+      VALUES ${values}
+      ON CONFLICT DO NOTHING
+      `,
+      ...params
+    );
+    console.log(`Inserted ${batch.length} ticks`);
+  } catch (err) {
+    console.error("DB insert error:", err);
+  }
+}
+
 async function run() {
   await consumer.connect();
   await consumer.subscribe({ topic: "ticks", fromBeginning: false });
@@ -23,14 +47,7 @@ async function run() {
     if (buffer.length === 0) return;
     const batch = [...buffer];
     buffer = [];
-
-    try {
-      await prisma.tick.createMany({ data: batch, skipDuplicates: true });
-      console.log(`Inserted ${batch.length} ticks`);
-    } catch (err) {
-      console.error("DB insert error:", err);
-      console.error("Failed batch:", batch);
-    }
+    await insertBatchSQL(batch);
   }, 10_000);
 
   await consumer.run({
@@ -47,7 +64,6 @@ async function run() {
       if (assetDecimals[tick.assetId]) {
         decimals = assetDecimals[tick.assetId];
       } else {
-        // try DB lookup
         const asset = await prisma.asset.findUnique({
           where: { symbol: tick.assetId },
           select: { priceDecimals: true },
@@ -67,7 +83,7 @@ async function run() {
             },
           });
           decimals = created.priceDecimals;
-          console.log(`🆕 Created asset ${tick.assetId}`);
+          console.log(`Created asset ${tick.assetId}`);
         }
   
         assetDecimals[tick.assetId] = decimals; 
