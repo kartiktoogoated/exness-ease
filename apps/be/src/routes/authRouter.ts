@@ -8,8 +8,6 @@ export const authRouter = Router();
 const JWT_SECRET = process.env.JWT_SECRET || "kartiktoogoated";
 
 authRouter.post("/signup", async (req: Request, res: Response) => {
-  // console.log("Headers:", req.headers);
-  // console.log("Body:", req.body);
   try {
     const { email, password, confirmPassword } = req.body as {
       email: string;
@@ -30,13 +28,13 @@ authRouter.post("/signup", async (req: Request, res: Response) => {
     });
 
     if (existingUser) {
-      return res.status(403).json({ message: "Error while signing up" });
+      return res.status(403).json({ message: "User already exists" });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await prisma.$transaction(async (tx) => {
-      const newUser = await prisma.user.create({
+      const newUser = await tx.user.create({
         data: {
           email,
           password: hashedPassword,
@@ -58,8 +56,8 @@ authRouter.post("/signup", async (req: Request, res: Response) => {
       userId: user.id,
     });
   } catch (err: any) {
-    console.error("signup error", err);
-    return res.status(403).json({ message: "Error while signing up" });
+    console.error("Signup error", err);
+    return res.status(500).json({ message: "Error while signing up", error: err.message });
   }
 });
 

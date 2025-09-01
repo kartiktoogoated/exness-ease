@@ -1,7 +1,6 @@
 import { Router, Request, Response } from "express";
 import prisma from "../prismaClient";
 import { authMiddleware } from "../middleware/authMiddleware";
-import { Decimal } from "@prisma/client/runtime/library";
 import { latestPrices } from "../services/tickConsumer";
 
 export const tradeRouter = Router();
@@ -17,11 +16,34 @@ export interface OrderOpenInput {
   qty: number;
 }
 
-const SPREADS: Record<string, number> = {
-  BTCUSDT: 10,
-  ETHUSDT: 15,
-  SOLUSDT: 20,
-};
+function getEntryPrice(marketPrice: number, side: OrderSide, spread: number): bigint {
+  let entry: number;
+  if (side === OrderSide.BUY) {
+    entry = marketPrice * (1 + spread);   
+  } else {
+    entry = marketPrice * (1 - spread);   
+  }
+  return BigInt(Math.round(entry));
+}
+
+function getExitPrice(marketPrice: number, side: OrderSide, spread: number): bigint {
+  let exit: number;
+  if (side === OrderSide.BUY) {
+    exit = marketPrice * (1 - spread); 
+  } else {
+    exit = marketPrice * (1 + spread); 
+  }
+  return BigInt(Math.round(exit));
+}
+
+// const SPREADS: Record<string, number> = {
+//   BTCUSDT: 10,
+//   ETHUSDT: 15,
+//   SOLUSDT: 20,
+// };
+
+const spreadBps = 50;
+const spread = spreadBps / 10000;
 
 const MAX_TICK_AGE = 5000;
 
@@ -31,14 +53,14 @@ tradeRouter.get(
   async (req: Request, res: Response) => {
     try {
       const userId = (req as any).user.userId;
-      const orders = await prisma.order.findMany({
+      const positions = await prisma.position.findMany({
         where: { userId },
         orderBy: { createdAt: "desc" },
       });
 
-      res.json({ orders });
+      res.json({ positions });
     } catch (err: any) {
-      console.error("Orders error:", err);
+      console.error("Positions error:", err);
       res.status(500).json({ message: "Internal Server Error" });
     }
   }
@@ -159,7 +181,9 @@ tradeRouter.post(
       const { asset, amount } = req.body as { asset: string; amount: number };
 
       if (!asset || asset !== "USDT" || !amount || amount <= 0) {
-        return res.status(400).json({ message: "Only positive USDT deposits allowed" });
+        return res
+          .status(400)
+          .json({ message: "Only positive USDT deposits allowed" });
       }
       await prisma.asset.upsert({
         where: { symbol: "USDT" },
@@ -179,9 +203,9 @@ tradeRouter.post(
         update: { qtyInt: { increment: BigInt(amount) } },
       });
 
-      res.json({ 
-        message: "Deposited USDT", 
-        balance: { ...bal, qtyInt: Number(bal.qtyInt) }
+      res.json({
+        message: "Deposited USDT",
+        balance: { ...bal, qtyInt: Number(bal.qtyInt) },
       });
     } catch (err: any) {
       console.error("Deposit error", err);
@@ -234,93 +258,82 @@ function fromIntPrice(priceInt: bigint, decimals: number): number {
   return Number(priceInt) / 10 ** decimals;
 }
 
-tradeRouter.post(
-  "/",
-  authMiddleware,
-  async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).user.userId;
-      const { type, margin, leverage, asset } = req.body as {
-        type: OrderSide;
-        margin: number;
-        leverage: number;
-        asset: string;
-      };
+tradeRouter.post("/", authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.userId;
+    const { type, margin, leverage, asset } = req.body as {
+      type: OrderSide;
+      margin: number;
+      leverage: number;
+      asset: string;
+    };
 
-      if (!type || !margin || !leverage || !asset) {
-        return res.status(411).json({ message: "Incorrect inputs" });
-      }
+    if (!type || !margin || !leverage || !asset) {
+      return res.status(411).json({ message: "Incorrect inputs" });
+    }
 
-      if (leverage < 1 || leverage > 100) {
-        return res.status(400).json({ message: "Invalid leverage" });
-      }      
+    if (leverage < 1 || leverage > 100) {
+      return res.status(400).json({ message: "Invalid leverage" });
+    }
 
-      const assetId = asset.toUpperCase();
+    const assetId = asset.toUpperCase();
 
-      const tick = latestPrices[assetId];
-      if (!tick) {
-        return res.status(411).json({ message: "No market data available" });
-      }
+    const tick = latestPrices[assetId];
+    if (!tick) {
+      return res.status(411).json({ message: "No market data available" });
+    }
 
-      const tickAge = Date.now() - new Date(tick.ts).getTime();
-      if (tickAge > MAX_TICK_AGE) {
-        return res
-          .status(411)
-          .json({ message: "Market data too old, try again later" });
-      }
+    const tickAge = Date.now() - new Date(tick.ts).getTime();
+    if (tickAge > MAX_TICK_AGE) {
+      return res
+        .status(411)
+        .json({ message: "Market data too old, try again later" });
+    }
 
-      const marginInt = BigInt(margin);
-      const qtyInt = marginInt * BigInt(leverage);
+    const marginInt = BigInt(margin);
+    const qtyInt = marginInt * BigInt(leverage);
 
-      const marketPrice = Number(tick.price);
+    const marketPrice = Number(tick.price);
 
-      let adjustedPrice: number;
-      if (type.toUpperCase() === "BUY") {
-        adjustedPrice = marketPrice * 1.01; 
-      } else {
-        adjustedPrice = marketPrice * 0.99; 
-      }
+    const openPrice = getEntryPrice(marketPrice, type as OrderSide, spread);
 
-      const openPrice = BigInt(Math.round(adjustedPrice));
-
-      const order = await prisma.$transaction(async (tx) => {
-        const usdBalance = await tx.balance.findUnique({
-          where: { userId_assetId: { userId, assetId: "USDT" } },
-        });
-  
-        if (!usdBalance || usdBalance.qtyInt < marginInt) {
-          throw new Error("Insufficient USDT balance");
-        }
-
-        await tx.balance.update({
-          where: { userId_assetId: { userId, assetId: "USDT" } },
-          data: { qtyInt: { decrement: marginInt } },
-        });
-
-        return await tx.order.create({
-          data: {
-            userId,
-            assetId,
-            type: type.toUpperCase() as "BUY" | "SELL",
-            leverage,
-            marginInt,
-            qtyInt,
-            openPrice,   
-            status: "OPEN",
-          },
-        });
+    const order = await prisma.$transaction(async (tx) => {
+      const usdBalance = await tx.balance.findUnique({
+        where: { userId_assetId: { userId, assetId: "USDT" } },
       });
 
-      return res.json({ orderId: order.id });
-    } catch (err: any) {
-      console.error("Trade error:", err);
-      if (err.message?.includes("balance")) {
-        return res.status(400).json({ message: err.message });
+      if (!usdBalance || usdBalance.qtyInt < marginInt) {
+        throw new Error("Insufficient USDT balance");
       }
-      return res.status(500).json({ message: "Internal Server Error" });
+
+      await tx.balance.update({
+        where: { userId_assetId: { userId, assetId: "USDT" } },
+        data: { qtyInt: { decrement: marginInt } },
+      });
+
+      return await tx.position.create({
+        data: {
+          userId,
+          assetId,
+          type: type.toUpperCase() as "BUY" | "SELL",
+          leverage,
+          marginInt,
+          qtyInt,
+          openPrice,
+          status: "OPEN",
+        },
+      });
+    });
+
+    return res.json({ orderId: order.id });
+  } catch (err: any) {
+    console.error("Trade error:", err);
+    if (err.message?.includes("balance")) {
+      return res.status(400).json({ message: err.message });
     }
+    return res.status(500).json({ message: "Internal Server Error" });
   }
-);
+});
 
 tradeRouter.get(
   "/trades/open",
@@ -329,20 +342,38 @@ tradeRouter.get(
     try {
       const userId = (req as any).user.userId;
 
-      const orders = await prisma.order.findMany({
+      const positions = await prisma.position.findMany({
         where: { userId, status: "OPEN" },
         orderBy: { createdAt: "desc" },
         include: { asset: true },
       });
 
       return res.json({
-        trades: orders.map((o) => ({
-          orderId: o.id,
-          type: o.type.toLowerCase(),
-          margin: Number(o.marginInt),
-          leverage: o.leverage,
-          openPrice: Number(o.openPrice),
-        })),
+        trades: positions.map((o) => {
+          const tick = latestPrices[o.assetId];
+          let unrealised = 0;
+
+          if (tick) {
+            const marketPrice = Number(tick.price);
+
+            const exitPrice = getExitPrice(marketPrice, o.type as OrderSide, spread);
+
+            if (o.type === OrderSide.BUY) {
+              unrealised = Number(((exitPrice - o.openPrice) * o.qtyInt) / o.openPrice);
+            } else {
+              unrealised = Number(((o.openPrice - exitPrice) * o.qtyInt) / o.openPrice);
+            }
+          }
+
+          return {
+            orderId: o.id,
+            type: o.type.toLowerCase(),
+            margin: Number(o.marginInt),
+            leverage: o.leverage,
+            openPrice: Number(o.openPrice),
+            unrealisedPnl: unrealised,
+          };
+        }),
       });
     } catch (err: any) {
       console.error("Open orders error:", err);
@@ -363,7 +394,7 @@ tradeRouter.post(
         return res.status(400).json({ message: "orderId is required" });
       }
 
-      const order = await prisma.order.findUnique({
+      const order = await prisma.position.findUnique({
         where: { id: orderId },
       });
 
@@ -381,30 +412,23 @@ tradeRouter.post(
       }
 
       const marketPrice = Number(tick.price);
-
-      let adjustedClosePrice: number;
-      if (order.type === "BUY") {
-        adjustedClosePrice = marketPrice * 0.99; 
-      } else {
-        adjustedClosePrice = marketPrice * 1.01; 
-      }
-
-      const closePrice = BigInt(Math.round(adjustedClosePrice));
+      const closePrice = getExitPrice(marketPrice, order.type as OrderSide, spread);
 
       let pnlInt = BigInt(0);
-      if (order.type === "BUY") {
-        pnlInt = (closePrice - order.openPrice) * order.qtyInt / order.openPrice;
-      } else if (order.type === "SELL") {
-        pnlInt = (order.openPrice - closePrice) * order.qtyInt / order.openPrice;
+      if (order.type === OrderSide.BUY) {
+        pnlInt = ((closePrice - order.openPrice) * order.qtyInt) / order.openPrice;
+      } else {
+        pnlInt = ((order.openPrice - closePrice) * order.qtyInt) / order.openPrice;
       }
 
       const closedOrder = await prisma.$transaction(async (tx) => {
-        const updated = await tx.order.update({
+        const updated = await tx.position.update({
           where: { id: orderId },
           data: {
             status: "CLOSED",
-            closePrice,
-            pnlInt,
+            closePrice: closePrice,
+            realisedPnlInt: pnlInt,
+            unrealisedPnlInt: null,
             closedAt: new Date(),
           },
         });
@@ -428,7 +452,7 @@ tradeRouter.post(
           leverage: closedOrder.leverage,
           openPrice: Number(closedOrder.openPrice),
           closePrice: Number(closedOrder.closePrice),
-          pnl: Number(closedOrder.pnlInt),
+          pnl: Number(closedOrder.realisedPnlInt),
         },
       });
     } catch (err: any) {
@@ -438,37 +462,38 @@ tradeRouter.post(
   }
 );
 
+tradeRouter.get(
+  "/trades",
+  authMiddleware,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user.userId;
 
-tradeRouter.get("/trades", authMiddleware, async(req: Request, res: Response) => {
-  try {
-    const userId = (req as any).user.userId;
+      const positions = await prisma.position.findMany({
+        where: {
+          userId,
+          status: { in: ["CLOSED", "LIQUIDATED"] },
+        },
+        orderBy: { closedAt: "desc" },
+      });
 
-    const orders = await prisma.order.findMany({
-      where: {
-        userId,
-        status: { in: ["CLOSED", "LIQUIDATED"] },
-      },
-      orderBy: { closedAt: "desc" },
-    });
+      const response = positions.map((o) => ({
+        orderId: o.id,
+        type: o.type.toLowerCase(),
+        margin: Number(o.marginInt),
+        leverage: o.leverage,
+        openPrice: Number(o.openPrice),
+        closePrice: o.closePrice ? Number(o.closePrice) : null,
+        pnl: o.realisedPnlInt ? Number(o.realisedPnlInt) : 0,
+      }));
 
-    const response = orders.map((o) => ({
-      orderId: o.id,
-      type: o.type.toLowerCase(),
-      margin: Number(o.marginInt),
-      leverage: o.leverage,
-      openPrice: Number(o.openPrice),
-      closePrice: o.closePrice ? Number(o.closePrice) : null,
-      pnl: o.pnlInt ? Number(o.pnlInt) : 0,
-    }));
-
-    return res.json({ trades: response });
-  } catch (err: any) {
-    console.error("Closed orders error:", err);
-    return res.status(500).json({ message: "Internal Server Error" });
+      return res.json({ trades: response });
+    } catch (err: any) {
+      console.error("Closed orders error:", err);
+      return res.status(500).json({ message: "Internal Server Error" });
+    }
   }
-});
-
-
+);
 
 tradeRouter.get(
   "/balance",
@@ -482,7 +507,37 @@ tradeRouter.get(
         select: { qtyInt: true },
       });
 
-      res.json({ usd_balance: balance ? Number(balance.qtyInt): 0});
+      const positions = await prisma.position.findMany({
+        where: { userId, status: "OPEN" },
+      });
+
+      let totalUnrealised = 0n;
+      for (const p of positions) {
+        const tick = latestPrices[p.assetId];
+        if (!tick) continue;
+      
+        const marketPrice = Number(tick.price);
+        const exitPrice = getExitPrice(marketPrice, p.type as OrderSide, spread);
+      
+        let uPnl = 0n;
+        if (p.type === OrderSide.BUY) {
+          uPnl = ((exitPrice - p.openPrice) * p.qtyInt) / p.openPrice;
+        } else {
+          uPnl = ((p.openPrice - exitPrice) * p.qtyInt) / p.openPrice;
+        }
+      
+        totalUnrealised += uPnl;
+      }
+      
+
+      const usdBalance = balance ? balance.qtyInt : 0n;
+      const equity = usdBalance + totalUnrealised;
+
+      res.json({
+        balance: Number(usdBalance),
+        equity: Number(equity),
+        unrealisedPnl: Number(totalUnrealised),
+      });
     } catch (err: any) {
       console.error("Balance error:", err);
       res.status(500).json({ message: "Internal Server Error" });
@@ -515,14 +570,11 @@ tradeRouter.get(
             decimals: asset.priceDecimals,
             imageUrl: asset.imageUrl,
           };
-        }
-        const spreadBps = 100; 
-        const spread = spreadBps / 10000;
-
+        } 
         const marketPrice = Number(tick.price);
 
-        const buyPrice = Math.floor(marketPrice * (1 + spread));
-        const sellPrice = Math.floor(marketPrice * (1 - spread));
+        const buyPrice = Number(getEntryPrice(marketPrice, OrderSide.BUY, spread));
+        const sellPrice = Number(getEntryPrice(marketPrice, OrderSide.SELL, spread));        
 
         return {
           name: asset.name,

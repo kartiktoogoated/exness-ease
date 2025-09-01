@@ -34,7 +34,7 @@ async function handleTick(tick: {
 
   const marketPrice = BigInt(Math.round(tick.price * 10 ** decimals));
 
-  const openOrders = await prisma.order.findMany({
+  const openOrders = await prisma.position.findMany({
     where: { status: "OPEN", assetId: tick.assetId },
   });
 
@@ -64,24 +64,27 @@ async function handleTick(tick: {
           `Equity Left: ${equity}`
         );
 
-      await prisma.$transaction(async (tx) => {
-        await tx.order.update({
-          where: { id: order.id },
-          data: {
-            status: "LIQUIDATED",
-            closePrice: marketPrice,
-            pnlInt,
-            closedAt: new Date(),
-          },
-        });
-
-        await tx.balance.update({
-          where: { userId_assetId: { userId: order.userId, assetId: "USDT" } },
-          data: {
-            qtyInt: { increment: equity > 0 ? equity : BigInt(0) },
-          },
-        });
-      });
+        await prisma.$transaction(async (tx) => {
+          await tx.position.update({
+            where: { id: order.id },
+            data: {
+              status: "LIQUIDATED",
+              closePrice: marketPrice,
+              realisedPnlInt: pnlInt,
+              unrealisedPnlInt: null, 
+              closedAt: new Date(),
+            },
+          });
+        
+          const credit = equity > 0 ? equity : BigInt(0);
+        
+          await tx.balance.update({
+            where: { userId_assetId: { userId: order.userId, assetId: "USDT" } },
+            data: {
+              qtyInt: { increment: credit },
+            },
+          });
+        });        
     }
   }
 }
