@@ -13,61 +13,65 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
 model Asset {
-  symbol         String  @id          
-  name           String
-  priceDecimals  Int     
-  qtyDecimals    Int    
-  imageUrl       String?
-  Orders         Order[]
-  Balances       Balance[]
-  Ticks          Tick[]
+  symbol        String     @id
+  name          String
+  priceDecimals Int
+  qtyDecimals   Int
+  imageUrl      String?
+  position      Position[]
+  Balances      Balance[]
+  Ticks         Tick[]
 }
+
 model User {
-  id        String    @id @default(uuid())
-  email     String    @unique
+  id        String     @id @default(uuid())
+  email     String     @unique
   password  String
-  role      String    @default("User")
+  role      String     @default("User")
   balances  Balance[]
-  orders    Order[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  position  Position[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 }
 
 model Balance {
-  id        String  @id @default(uuid())
-  userId    String
-  assetId   String 
-  qtyInt    BigInt  
+  id      String @id @default(uuid())
+  userId  String
+  assetId String
+  qtyInt  BigInt
 
-  user      User    @relation(fields: [userId], references: [id])
-  asset     Asset   @relation(fields: [assetId], references: [symbol])
+  user  User  @relation(fields: [userId], references: [id])
+  asset Asset @relation(fields: [assetId], references: [symbol])
 
   @@unique([userId, assetId])
 }
-model Order {
-  id          String      @id @default(uuid())
-  userId      String
-  assetId     String      
 
-  type        OrderType   
-  status      TradeStatus @default(OPEN) 
+model Position {
+  id      String @id @default(uuid())
+  userId  String
+  assetId String
 
-  qtyInt      BigInt
+  type   OrderType
+  status TradeStatus @default(OPEN)
 
-  openPrice   BigInt
-  closePrice  BigInt?
+  qtyInt BigInt
 
-  leverage    Int         @default(1)
-  marginInt   BigInt      @default(0)  
+  openPrice  BigInt
+  closePrice BigInt?
 
-  pnlInt      BigInt?
+  leverage  Int    @default(1)
+  marginInt BigInt @default(0)
 
-  createdAt   DateTime    @default(now())
-  closedAt    DateTime?
+  realisedPnlInt   BigInt  @default(0)
+  unrealisedPnlInt BigInt?
 
-  user        User        @relation(fields: [userId], references: [id])
-  asset       Asset       @relation(fields: [assetId], references: [symbol])
+  createdAt DateTime  @default(now())
+  closedAt  DateTime?
+
+  user  User  @relation(fields: [userId], references: [id])
+  asset Asset @relation(fields: [assetId], references: [symbol])
 
   @@index([userId, status, createdAt])
 }
@@ -75,9 +79,9 @@ model Order {
 model Tick {
   assetId String
   ts      DateTime
-  price   BigInt   
+  price   BigInt
 
-  asset   Asset    @relation(fields: [assetId], references: [symbol])
+  asset Asset @relation(fields: [assetId], references: [symbol])
 
   @@id([assetId, ts])
   @@index([assetId, ts])
